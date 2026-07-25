@@ -47,7 +47,11 @@
 <script>
   var AGENTS = [{"label": "Agent 1", "phone": "905050146625", "weight": 1}];
   var MESSAGE = "Hello, can I get information about hair transplantation? Ref: Meta Ad";
-  var MODE = "random";
+  var MODE = "round-robin";
+  // Merkezi sıra sayacı: round-robin tüm ziyaretçiler arasında ortak sırayla
+  // dağıtır (Supabase RPC, atomik artış). Ulaşılamazsa random'a düşer.
+  var RPC_URL = "https://zmdbafqjtqlenleocukz.supabase.co/rest/v1/rpc/wa_next";
+  var RPC_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InptZGJhZnFqdHFsZW5sZW9jdWt6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc0NzA0NDMsImV4cCI6MjA5MzA0NjQ0M30.bVUMLSwi37WlltqdZYVIkpIJUHgXnECYvSaj3C4iQtE";
 
   function pickWeighted(list) {
     var total = 0, i;
@@ -60,21 +64,12 @@
     return list[list.length - 1];
   }
 
-  function pickAgent() {
-    if (!AGENTS.length) return null;
-    if (MODE === "random") return AGENTS[Math.floor(Math.random() * AGENTS.length)];
+  function pickLocal() {
     if (MODE === "weighted") return pickWeighted(AGENTS);
-    // round-robin: tarayıcıda localStorage sayacı ile sıralı dağıtım
-    var key = "wa_router_idx";
-    var idx = parseInt(localStorage.getItem(key) || "0", 10);
-    if (isNaN(idx) || idx < 0) idx = 0;
-    var agent = AGENTS[idx % AGENTS.length];
-    localStorage.setItem(key, String((idx + 1) % AGENTS.length));
-    return agent;
+    return AGENTS[Math.floor(Math.random() * AGENTS.length)];
   }
 
-  var agent = pickAgent();
-  if (agent) {
+  function finish(agent) {
     var url = "https://wa.me/" + agent.phone +
               (MESSAGE ? "?text=" + encodeURIComponent(MESSAGE) : "");
     var btn = document.getElementById("manual");
@@ -85,9 +80,30 @@
       btn.classList.remove("hidden");
     }, 1500);
     window.location.replace(url);
-  } else {
+  }
+
+  if (!AGENTS.length) {
     document.getElementById("spinner").classList.add("hidden");
     document.querySelector("p").textContent = "No agent configured yet.";
+  } else if (MODE === "round-robin" && AGENTS.length > 1) {
+    var ctrl = ("AbortController" in window) ? new AbortController() : null;
+    var timer = ctrl && setTimeout(function () { ctrl.abort(); }, 2000);
+    fetch(RPC_URL, {
+      method: "POST",
+      headers: { "apikey": RPC_KEY, "Authorization": "Bearer " + RPC_KEY,
+                  "Content-Type": "application/json" },
+      body: JSON.stringify({ p_site: location.host + location.pathname }),
+      signal: ctrl ? ctrl.signal : undefined
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (n) {
+        if (timer) clearTimeout(timer);
+        n = parseInt(n, 10);
+        finish(AGENTS[(isNaN(n) || n < 0 ? 0 : n) % AGENTS.length]);
+      })
+      .catch(function () { if (timer) clearTimeout(timer); finish(pickLocal()); });
+  } else {
+    finish(MODE === "round-robin" ? AGENTS[0] : pickLocal());
   }
 </script>
 </body>
